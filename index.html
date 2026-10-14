@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Template Maker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,600;112,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<style>
+/* Layout: a pick-ticket workflow. Sign in, then three input panels (File 1, File 2, lookups), the rules strip, order lines, and the rows left out with their reasons. */
+:root {
+  --paper: #F2F5F4;
+  --surface: #FFFFFF;
+  --sunk: #E8EEEB;
+  --ink: #13201B;
+  --muted: #56655F;
+  --line: #D3DCD8;
+  --accent: #1D55D0;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E2EAFB;
+  --warn: #8A5300;
+  --warn-soft: #FFF0D3;
+  --ok: #16704A;
+  --ok-soft: #DCF2E6;
+  --bad: #B42318;
+  --bad-soft: #FDE7E4;
+  --shadow: 0 1px 2px rgba(19, 32, 27, .06), 0 4px 16px rgba(19, 32, 27, .05);
+
+  --f-display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --t-xs: .75rem; --t-sm: .8125rem; --t-base: .875rem; --t-md: 1rem; --t-lg: 1.25rem; --t-xl: clamp(1.6rem, 1.2rem + 1.6vw, 2.25rem);
+  --r: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0E1412; --surface: #151D1A; --sunk: #1B2622; --ink: #E4EBE8; --muted: #93A39C; --line: #29352F;
+    --accent: #7EA4FF; --accent-ink: #0B1430; --accent-soft: #1A2747;
+    --warn: #F1B54E; --warn-soft: #2F2510; --ok: #5DCB92; --ok-soft: #12291E; --bad: #FF8A7A; --bad-soft: #351714;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0E1412; --surface: #151D1A; --sunk: #1B2622; --ink: #E4EBE8; --muted: #93A39C; --line: #29352F;
+  --accent: #7EA4FF; --accent-ink: #0B1430; --accent-soft: #1A2747;
+  --warn: #F1B54E; --warn-soft: #2F2510; --ok: #5DCB92; --ok-soft: #12291E; --bad: #FF8A7A; --bad-soft: #351714;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--f-body); font-size: var(--t-base); line-height: 1.5; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 56px; display: grid; gap: 20px; }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+.top-text { display: grid; gap: 6px; min-width: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: var(--t-xs); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--f-display); font-stretch: 112%; font-weight: 800; font-size: var(--t-xl); line-height: 1.1; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); max-width: 72ch; font-size: var(--t-md); }
+.who { font-size: var(--t-sm); color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.who strong { color: var(--ink); font-weight: 500; font-family: var(--f-mono); }
+
+/* Login */
+.login { max-width: 520px; justify-self: center; text-align: center; padding: 36px 24px; justify-items: center; }
+.login h2 { font-family: var(--f-display); font-stretch: 112%; font-weight: 600; font-size: var(--t-lg); margin: 0; }
+.login p { margin: 0; color: var(--muted); }
+
+/* Panels */
+.inputs { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 720px) { .inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inputs .kp { grid-column: 1 / -1; } }
+@media (min-width: 1140px) { .inputs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr); } .inputs .kp { grid-column: auto; } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-head h2 { font-family: var(--f-display); font-stretch: 112%; font-weight: 600; font-size: var(--t-lg); margin: 0; line-height: 1.2; }
+.step { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-family: var(--f-mono); font-size: var(--t-sm); font-weight: 500; background: var(--ink); color: var(--surface); flex: none; }
+.panel-head .spacer { flex: 1; }
+.col { font-family: var(--f-mono); font-size: var(--t-xs); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: 400; }
+.sub { font-family: var(--f-display); font-stretch: 112%; font-weight: 600; font-size: var(--t-md); margin: 0; }
+
+/* Drop zone */
+.drop { position: relative; display: grid; gap: 4px; place-items: center; text-align: center; padding: 24px 16px; border: 1.5px dashed var(--line); border-radius: var(--r); background: var(--sunk); cursor: pointer; transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.drop-title { font-weight: 600; font-size: var(--t-md); }
+.drop-title u { color: var(--accent); text-underline-offset: 3px; }
+.drop-hint { color: var(--muted); font-size: var(--t-sm); font-family: var(--f-mono); }
+.drop.busy { pointer-events: none; opacity: .7; }
+
+.status { display: grid; gap: 8px; font-size: var(--t-sm); }
+.filemeta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.filemeta strong { color: var(--ink); font-family: var(--f-mono); font-weight: 500; word-break: break-all; }
+.facts { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.facts li { display: flex; gap: 8px; align-items: baseline; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; transform: translateY(-1px); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.idle { background: var(--line); }
+.err { background: var(--bad-soft); color: var(--bad); border-radius: 6px; padding: 10px 12px; font-size: var(--t-sm); }
+
+/* Lookups */
+.lk { display: grid; gap: 10px; }
+.lk + .lk { border-top: 1px solid var(--line); padding-top: 14px; }
+.lkhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
+.keyrow { display: flex; gap: 6px; min-width: 0; }
+.keyrow input { flex: 1; min-width: 0; }
+.kstatus { display: flex; gap: 8px; align-items: baseline; font-size: var(--t-sm); padding: 9px 12px; border-radius: 6px; background: var(--sunk); color: var(--muted); }
+.kstatus[data-kind="ok"] { background: var(--ok-soft); color: var(--ok); }
+.kstatus[data-kind="warn"] { background: var(--warn-soft); color: var(--warn); }
+.kstatus[data-kind="err"] { background: var(--bad-soft); color: var(--bad); }
+.kstatus[data-kind="busy"] { background: var(--accent-soft); color: var(--ink); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; display: inline-block; flex: none; animation: spin .8s linear infinite; transform: translateY(1px); }
+@keyframes spin { to { transform: translateY(1px) rotate(360deg); } }
+
+/* Rules */
+.rules { display: grid; gap: 10px 24px; grid-template-columns: minmax(0, 1fr); margin: 0; padding: 0; list-style: none; counter-reset: rule; }
+@media (min-width: 640px) { .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1100px) { .rules { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.rules li { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.rules li b { font-size: var(--t-sm); font-weight: 600; }
+.rules li span { font-size: var(--t-xs); color: var(--muted); }
+.rules li em { font-style: normal; font-family: var(--f-mono); font-size: var(--t-xs); color: var(--warn); }
+.hint { font-size: var(--t-xs); color: var(--muted); margin: 0; }
+
+button { font: 500 var(--t-sm)/1 var(--f-body); border-radius: 6px; padding: 9px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+button:hover { border-color: var(--ink); }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.link { border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 500; }
+button.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: var(--t-sm); cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > label { font-size: var(--t-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.field input { font: 500 var(--t-base)/1.2 var(--f-mono); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; min-width: 0; }
+
+/* Output */
+.toolbar { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: end; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.datehint { font-size: var(--t-xs); color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.stat { background: var(--surface); padding: 12px 14px; display: grid; gap: 2px; }
+.stat b { font-family: var(--f-display); font-stretch: 112%; font-weight: 800; font-size: 1.5rem; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.stat span { font-size: var(--t-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.notes { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--t-sm); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: var(--t-sm); }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.excl { color: var(--muted); }
+.excl b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.table-wrap { overflow: auto; max-height: min(70vh, 720px); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: var(--t-sm); }
+th, td { padding: 7px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+thead th { position: sticky; top: 0; z-index: 1; background: var(--sunk); font-family: var(--f-mono); font-weight: 500; font-size: var(--t-xs); color: var(--muted); }
+thead th .letter { display: block; font-size: 10px; opacity: .7; }
+tbody tr:hover td { background: var(--accent-soft); }
+td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--f-mono); }
+td.m { font-family: var(--f-mono); }
+td.src { color: var(--muted); font-family: var(--f-mono); text-align: right; }
+td.name { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+td.miss { background: var(--warn-soft); color: var(--warn); }
+td.pend { color: var(--muted); font-style: italic; }
+td.why { white-space: normal; min-width: 280px; color: var(--bad); }
+td a { color: var(--accent); text-decoration: none; font-family: var(--f-mono); }
+td a:hover { text-decoration: underline; }
+.neg { color: var(--bad); }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); white-space: normal; }
+
+.fallback { display: grid; gap: 8px; }
+.fallback p { margin: 0; font-size: var(--t-sm); }
+.fallback textarea { width: 100%; min-height: 120px; font: var(--t-xs)/1.4 var(--f-mono); background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+
+details.map { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 18px; }
+details.map summary { cursor: pointer; font-weight: 600; }
+.maplist { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 24px; margin: 12px 0 0; font-size: var(--t-sm); }
+.maplist div { display: grid; grid-template-columns: 15ch minmax(0, 1fr); gap: 8px; border-bottom: 1px dashed var(--line); padding-bottom: 5px; }
+.maplist dt { font-family: var(--f-mono); }
+.maplist dd { margin: 0; color: var(--muted); }
+
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 8px; font-size: var(--t-sm); box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { .toast, .drop { transition: none; } .spin { animation: none; } }
+@media (max-width: 640px) { .actions { margin-left: 0; width: 100%; } .actions button { flex: 1 1 auto; justify-content: center; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="top-text">
+      <div class="eyebrow">Reorder list + SBD + o2i + Keepa &rarr; Order Template</div>
+      <h1>Order Template Maker</h1>
+      <p class="lede">Drop the reorder list and the distributor file. Each row is checked against o2i and the shelf-life rules, given a Keepa category, and exported as the Order Template.</p>
+    </div>
+    <div class="who" id="who"></div>
+  </header>
+
+  <section class="panel login" id="login" aria-labelledby="h-login">
+    <h2 id="h-login">Sign in to continue</h2>
+    <p>Use your <b>@usawholesalesupplies.com</b> Google account, the same one as the Offer Sheet Maker.</p>
+    <button class="primary" id="googleBtn" type="button">Sign in with Google</button>
+    <p id="loginMsg" class="hint" role="status"></p>
+  </section>
+
+  <main id="app" class="wrap" style="padding:0" hidden>
+    <div class="inputs">
+      <section class="panel" aria-labelledby="h-f1">
+        <div class="panel-head"><span class="step">1</span><h2 id="h-f1">Reorder list</h2><span class="spacer"></span><span class="col">File 1</span></div>
+        <label class="drop" id="drop1">
+          <input type="file" id="file1" accept=".xlsx,.xlsm,.xls,.csv">
+          <span class="drop-title">Drop File 1 here or <u>choose a file</u></span>
+          <span class="drop-hint">ASIN · UPC · TITLE &hellip; Store Code &hellip; Ungating Status</span>
+        </label>
+        <div class="status" id="st1"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-f2">
+        <div class="panel-head"><span class="step">2</span><h2 id="h-f2">Distributor file</h2><span class="spacer"></span><span class="col">File 2</span></div>
+        <label class="drop" id="drop2">
+          <input type="file" id="file2" accept=".xlsx,.xlsm,.xls,.csv">
+          <span class="drop-title">Drop File 2 here or <u>choose a file</u></span>
+          <span class="drop-hint">dc · UPC · ITEM NUMBER &hellip; Days remaining</span>
+        </label>
+        <div class="status" id="st2"></div>
+      </section>
+
+      <section class="panel kp" aria-labelledby="h-lk">
+        <div class="panel-head"><span class="step">3</span><h2 id="h-lk">Lookups</h2></div>
+        <div class="lk">
+          <div class="lkhead"><h3 class="sub">o2i accounts</h3><button class="link" id="o2iGo" type="button">Refresh from o2i</button></div>
+          <div class="kstatus" id="o2iStatus" role="status" aria-live="polite"></div>
+          <p class="hint">Account Status and Storage Limit come live from o2i, matched by Store Code.</p>
+        </div>
+        <div class="lk">
+          <div class="lkhead"><h3 class="sub">Keepa category</h3><button class="link" id="kClear" type="button">Forget saved categories</button></div>
+          <div class="field">
+            <label for="kKey">Keepa API key</label>
+            <div class="keyrow">
+              <input id="kKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your private API access key">
+              <button id="kShow" type="button" aria-pressed="false">Show</button>
+            </div>
+          </div>
+          <div class="kactions" style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center">
+            <button class="primary" id="kGo" type="button">Look up categories</button>
+            <label class="check"><input type="checkbox" id="kRemember"> Remember key on this device</label>
+          </div>
+          <div class="kstatus" id="kStatus" role="status" aria-live="polite"></div>
+          <p class="hint">Root category by ASIN, 1 Keepa token per ASIN. Only order lines are looked up, and found categories are remembered in this browser.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="h-rules">
+      <div class="panel-head"><span class="step">4</span><h2 id="h-rules">Rules</h2><span class="spacer"></span><span class="hint">A row becomes an order line only if it passes all five.</span></div>
+      <ol class="rules" id="rulesList"></ol>
+    </section>
+
+    <section class="panel" aria-labelledby="h-out">
+      <div class="panel-head"><span class="step">5</span><h2 id="h-out">Order lines</h2></div>
+      <div class="toolbar">
+        <div class="field"><label for="orderDate">Date ordered</label><input type="date" id="orderDate"></div>
+        <span class="datehint" id="dateHint"></span>
+        <label class="check"><input type="checkbox" id="incHeader"> Copy with header row</label>
+        <div class="actions">
+          <button id="xlsxBtn" class="primary" type="button">Download .xlsx</button>
+          <button id="copyBtn" type="button">Copy rows</button>
+        </div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="notes" id="notes"></div>
+      <div class="table-wrap"><table id="tbl"></table></div>
+      <div class="fallback" id="fallback" hidden>
+        <p>Your browser blocked the clipboard. The rows are selected below; press Ctrl+C (&#8984;C on Mac) to copy them.</p>
+        <textarea id="fallbackText" readonly aria-label="Rows to copy"></textarea>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-left">
+      <div class="panel-head"><h2 id="h-left">Left out</h2><span class="spacer"></span><span class="hint" id="leftCount"></span></div>
+      <div class="table-wrap" style="max-height:min(50vh,520px)"><table id="leftTbl"></table></div>
+    </section>
+
+    <details class="map">
+      <summary>How each column is filled</summary>
+      <dl class="maplist" id="mapList"></dl>
+    </details>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ===CORE=== pure logic: no DOM below this line until ===END CORE=== */
+  const OUT = ['Tracking_code','Asin','upc/gtin','Brand','Product_name','Amz_link','Category','Bundle_size','Unit_price','Order_quantity','Target_sell_price','profit','Roi','Breakeven_price','Distributor','Date_ordered','Order_id','Invoice_number','Notes','Client'];
+  const MIN_DAYS = 270;
+
+  // [key, fallback column letter, header label, accepted header spellings (normalized)]
+  const F1 = [
+    ['asin', 'A', 'ASIN', ['asin']],
+    ['upc', 'B', 'UPC', ['upc', 'upcgtin', 'gtin']],
+    ['title', 'C', 'TITLE', ['title', 'productname']],
+    ['brand', 'D', 'BRAND', ['brand']],
+    ['dist', 'E', 'DISTRIBUTOR', ['distributor']],
+    ['avg90', 'F', '90Days Average', ['90daysaverage', '90dayaverage', '90daysavg', '90dayavg']],
+    ['recQty', 'G', 'Recommended Qty.', ['recommendedqty', 'recommendedquantity']],
+    ['unitCost', 'H', 'Unit Cost', ['unitcost']],
+    ['bundle', 'I', 'Bundle Size', ['bundlesize']],
+    ['profit', 'J', 'Profit Per Unit', ['profitperunit']],
+    ['roi', 'K', 'ROI', ['roi']],
+    ['breakeven', 'L', 'Breakeven', ['breakeven', 'breakevenprice']],
+    ['client', 'O', 'Client', ['client']],
+    ['store', 'P', 'Store Code', ['storecode']],
+    ['ung', 'U', 'Ungating Status', ['ungatingstatus']]
+  ];
+  const F2 = [
+    ['upc', 'B', 'UPC', ['upc']],
+    ['item', 'C', 'ITEM NUMBER', ['itemnumber', 'itemno']],
+    ['days', 'N', 'Days remaining', ['daysremaining']]
+  ];
+
+  const CI = l => { let n = 0; for (const ch of l) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+  const isBlank = v => v === undefined || v === null || String(v).trim() === '';
+  const norm = v => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const ieq = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+  function toNum(v) {
+    if (typeof v === 'number') return v;
+    if (isBlank(v)) return NaN;
+    const s = String(v).trim().replace(/[$,\s]/g, '');
+    if (s.endsWith('%')) { const n = Number(s.slice(0, -1)); return isNaN(n) ? NaN : n / 100; }
+    return Number(s);
+  }
+  const num = v => { const n = toNum(v); return isNaN(n) ? (isBlank(v) ? '' : String(v)) : n; };
+  const str = v => isBlank(v) ? '' : String(v).trim();
+  const upcKey = v => isBlank(v) ? '' : String(typeof v === 'number' ? Math.round(v) : v).replace(/\D/g, '').replace(/^0+/, '');
+  const upcOut = v => { if (isBlank(v)) return ''; const s = String(typeof v === 'number' ? Math.round(v) : v).trim(); return /^\d{1,15}$/.test(s) ? Number(s) : s; };
+  const idOut = v => { const s = str(v); return /^\d{1,15}$/.test(s) ? Number(s) : s; };
+  function storagePct(v) {
+    if (isBlank(v)) return null;
+    if (typeof v === 'number') return v <= 5 ? v * 100 : v;
+    const m = /(-?\d+(?:\.\d+)?)\s*%/.exec(String(v));
+    return m ? Number(m[1]) : null;
+  }
+  const storageOk = v => ieq(v, 'No Limit') || (() => { const p = storagePct(v); return p !== null && p < 100; })();
+
+  // Date_ordered: the Friday of this week; Saturday and Sunday roll to the next Friday.
+  function orderFriday(d) {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    x.setDate(x.getDate() + ((5 - x.getDay() + 7) % 7));
+    return x;
+  }
+
+  function resolveCols(header, spec) {
+    const idx = new Map();
+    (header || []).forEach((h, i) => { const k = norm(h); if (k && !idx.has(k)) idx.set(k, i); });
+    const cols = {}, byPos = [];
+    for (const [key, letter, label, names] of spec) {
+      let i = -1;
+      for (const n of names) if (idx.has(n)) { i = idx.get(n); break; }
+      if (i < 0) { i = CI(letter); byPos.push(`${label} (column ${letter})`); }
+      cols[key] = i;
+    }
+    return { cols, byPos };
+  }
+  function findHeader(aoa, test, max = 40) {
+    for (let i = 0; i < Math.min(aoa.length, max); i++) { const r = aoa[i]; if (r && test(r.map(norm))) return i; }
+    return -1;
+  }
+  const isF1Header = ns => ns.includes('asin') && ns.includes('upc');
+  const isF2Header = ns => ns.includes('upc') && (ns.includes('itemnumber') || ns.includes('itemno'));
+
+  function parseFile1(aoa) {
+    const h = findHeader(aoa, isF1Header);
+    if (h < 0) return null;
+    const { cols, byPos } = resolveCols(aoa[h], F1);
+    const rows = [];
+    for (let i = h + 1; i < aoa.length; i++) { const r = aoa[i]; if (r && !isBlank(r[cols.asin])) rows.push({ r, line: i + 1 }); }
+    return { cols, byPos, rows, headerLine: h + 1 };
+  }
+  function parseFile2(aoa) {
+    const h = findHeader(aoa, isF2Header);
+    if (h < 0) return null;
+    const { cols, byPos } = resolveCols(aoa[h], F2);
+    const map = new Map();
+    let count = 0;
+    for (let i = h + 1; i < aoa.length; i++) {
+      const r = aoa[i]; if (!r) continue;
+      const k = upcKey(r[cols.upc]); if (!k) continue;
+      count++;
+      if (!map.has(k)) map.set(k, { item: r[cols.item], days: r[cols.days] });
+    }
+    return { map, count, byPos, headerLine: h + 1 };
+  }
+  const storeCodes = s1 => [...new Set(s1.rows.map(({ r }) => str(r[s1.cols.store]).toUpperCase()).filter(Boolean))];
+
+  // o2i: Map STORECODE -> {account_status, storage_limit, client_name}
+  function buildLines(s1, s2, o2i) {
+    const c = s1.cols;
+    const rows = [], left = [];
+    for (const { r, line } of s1.rows) {
+      const g = k => r[c[k]];
+      const why = [];
+      const store = str(g('store')).toUpperCase();
+      const acct = store ? o2i.get(store) : null;
+      if (!store) why.push('No Store Code in File 1');
+      else if (!acct) why.push(`Store code ${store} isn’t found in o2i`);
+      else {
+        if (!ieq(acct.account_status, 'Active')) why.push(`Account status is ${acct.account_status || 'blank'} in o2i`);
+        if (!storageOk(acct.storage_limit)) {
+          const p = storagePct(acct.storage_limit);
+          why.push(p !== null ? `Storage ${p}% used in o2i` : `Storage Limit is ${isBlank(acct.storage_limit) ? 'blank' : '“' + str(acct.storage_limit) + '”'} in o2i`);
+        }
+      }
+      const upcRaw = g('upc');
+      const sbd = s2.map.get(upcKey(upcRaw));
+      if (!sbd) why.push(`UPC ${upcOut(upcRaw) || '(blank)'} isn’t in File 2`);
+      else {
+        const d = toNum(sbd.days);
+        if (isNaN(d)) why.push('No Days remaining in File 2');
+        else if (d < MIN_DAYS) why.push(`${d} days remaining (needs ${MIN_DAYS}+)`);
+      }
+      if (!ieq(g('ung'), 'Ungated')) why.push(`Ungating status is ${str(g('ung')) || 'blank'}`);
+
+      const asin = str(g('asin'));
+      if (why.length) { left.push({ line, asin, client: str(g('client')), store, why }); continue; }
+      const rec = toNum(g('recQty')), bun = isBlank(g('bundle')) ? 1 : toNum(g('bundle'));
+      rows.push({
+        Tracking_code: '', Asin: asin, 'upc/gtin': upcOut(upcRaw),
+        Brand: str(g('brand')), Product_name: str(g('title')),
+        Amz_link: asin ? 'https://www.amazon.com/dp/' + asin : '',
+        Category: '',
+        Bundle_size: num(g('bundle')), Unit_price: num(g('unitCost')),
+        Order_quantity: isNaN(rec) || isNaN(bun) ? '' : Math.round(rec * bun * 1e6) / 1e6,
+        Target_sell_price: num(g('avg90')), profit: num(g('profit')), Roi: num(g('roi')), Breakeven_price: num(g('breakeven')),
+        Distributor: str(g('dist')), Date_ordered: '', Order_id: idOut(sbd.item),
+        Invoice_number: '', Notes: '', Client: str(g('client')),
+        _line: line, _cat: 'pending', _store: store
+      });
+    }
+    return { rows, left, total: s1.rows.length };
+  }
+
+  function catsFromKeepa(json) {
+    const m = new Map();
+    for (const p of (json && json.products) || []) {
+      if (!p || !p.asin) continue;
+      const t = Array.isArray(p.categoryTree) ? p.categoryTree.filter(x => x && x.name) : [];
+      m.set(String(p.asin).toUpperCase(), t.length ? t[0].name : null);
+    }
+    return m;
+  }
+  /* ===END CORE=== */
+
+  /* ---------- Formatting ---------- */
+  const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const int = new Intl.NumberFormat('en-US');
+  const pad2 = n => String(n).padStart(2, '0');
+  const isoOf = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const fmtDate = iso => { if (!iso) return ''; const [y, m, d] = iso.split('-').map(Number); return `${m}/${d}/${y}`; };
+  const dateSerial = iso => { const [y, m, d] = iso.split('-').map(Number); return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000; };
+  const CURRENCY = new Set(['Unit_price', 'Target_sell_price', 'profit', 'Breakeven_price']);
+  const MONO = new Set(['Asin', 'upc/gtin', 'Order_id']);
+  function fmt(key, v) {
+    if (v === '' || v === null || v === undefined) return '';
+    if (typeof v === 'number') {
+      if (CURRENCY.has(key)) return usd.format(v);
+      if (key === 'Roi') return (v * 100).toFixed(2) + '%';
+      return String(v);
+    }
+    if (key === 'Date_ordered') return fmtDate(v);
+    return String(v);
+  }
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const plural = (n, one, many) => `${int.format(n)} ${n === 1 ? one : many}`;
+
+  /* ---------- Storage (per-browser conveniences) ---------- */
+  const store = {
+    get(k) { try { const v = localStorage.getItem(k); return v === null ? null : JSON.parse(v); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+    del(k) { try { localStorage.removeItem(k); } catch (e) { /* storage unavailable */ } }
+  };
+  function loadCats() {
+    const m = new Map(), o = store.get('otm.cats.root');
+    if (o && typeof o === 'object') for (const [a, v] of Object.entries(o)) if (typeof v === 'string' && v) m.set(a, v);
+    return m;
+  }
+  function saveCats() {
+    const o = {}; let n = 0;
+    for (const [a, v] of state.cats) if (v && n++ < 50000) o[a] = v;
+    store.set('otm.cats.root', o);
+  }
+
+  /* ---------- State ---------- */
+  const remember = !!store.get('otm.remember');
+  const state = {
+    session: null,
+    s1: null, s2: null, err1: '', err2: '',
+    o2i: { map: new Map(), codes: '', at: null, busy: false, error: '', missing: [], duplicates: [] },
+    cats: loadCats(),
+    rows: [], left: [], total: 0,
+    orderDate: isoOf(orderFriday(new Date())),
+    includeHeader: !!store.get('otm.includeHeader'),
+    key: remember ? (store.get('otm.key') || '') : '',
+    remember,
+    k: { kind: 'idle', text: '' }, kBusy: false, kAuto: true
+  };
+  const attempted = new Set();
+
+  const $ = id => document.getElementById(id);
+  const els = {
+    who: $('who'), login: $('login'), app: $('app'), googleBtn: $('googleBtn'), loginMsg: $('loginMsg'),
+    file1: $('file1'), file2: $('file2'), drop1: $('drop1'), drop2: $('drop2'), st1: $('st1'), st2: $('st2'),
+    o2iGo: $('o2iGo'), o2iStatus: $('o2iStatus'),
+    kKey: $('kKey'), kShow: $('kShow'), kRemember: $('kRemember'), kGo: $('kGo'), kClear: $('kClear'), kStatus: $('kStatus'),
+    rulesList: $('rulesList'), orderDate: $('orderDate'), dateHint: $('dateHint'), incHeader: $('incHeader'),
+    xlsxBtn: $('xlsxBtn'), copyBtn: $('copyBtn'), stats: $('stats'), notes: $('notes'), tbl: $('tbl'),
+    leftTbl: $('leftTbl'), leftCount: $('leftCount'), fallback: $('fallback'), fallbackText: $('fallbackText'),
+    toast: $('toast'), mapList: $('mapList')
+  };
+
+  /* ---------- Sign in (same o2i Google login as the Offer Sheet Maker) ---------- */
+  const C = window.ORDER_TEMPLATE_CONFIG || {};
+  let sb = null;
+  const okEmail = e => String(e || '').toLowerCase().endsWith('@' + C.DOMAIN);
+  function showSession(s) {
+    if (s && okEmail(s.user && s.user.email)) {
+      state.session = s;
+      els.login.hidden = true; els.app.hidden = false;
+      els.who.innerHTML = `<strong>${esc(s.user.email)}</strong><button class="link" id="outBtn" type="button">Sign out</button>`;
+      $('outBtn').onclick = () => sb.auth.signOut().then(() => location.reload());
+      if (state.s1 && !state.o2i.at && !state.o2i.busy && !state.o2i.error) refreshO2i();
+    } else {
+      if (s) { sb.auth.signOut(); els.loginMsg.textContent = `Use your @${C.DOMAIN} account.`; }
+      state.session = null;
+      els.login.hidden = false; els.app.hidden = true; els.who.textContent = '';
+    }
+  }
+  if (!window.supabase || !C.O2I_PUBLISHABLE_KEY) {
+    els.loginMsg.textContent = !window.supabase ? 'The sign-in library didn’t load. Check your connection and reload.' : 'Setup needed: config.js is missing the o2i key.';
+    els.googleBtn.disabled = true;
+  } else {
+    sb = window.supabase.createClient(C.O2I_URL, C.O2I_PUBLISHABLE_KEY);
+    sb.auth.getSession().then(r => showSession(r.data && r.data.session));
+    sb.auth.onAuthStateChange((_e, s) => showSession(s));
+    els.googleBtn.onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname, queryParams: { hd: C.DOMAIN, prompt: 'select_account' } } });
+  }
+
+  /* ---------- o2i lookup ---------- */
+  async function refreshO2i() {
+    if (!state.s1 || !state.session || state.o2i.busy) return;
+    const codes = storeCodes(state.s1);
+    if (!codes.length) { state.o2i = { ...state.o2i, map: new Map(), error: 'File 1 has no Store Codes.', at: null }; refresh(); return; }
+    state.o2i.busy = true; state.o2i.error = ''; renderO2i();
+    const map = new Map(), missing = [], dupes = [];
+    try {
+      for (let i = 0; i < codes.length; i += 200) {
+        const { data } = await sb.auth.getSession();
+        const token = data && data.session && data.session.access_token;
+        if (!token) throw new Error('Your session ended. Sign in again.');
+        const res = await fetch(C.LOOKUP_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-token': token }, body: JSON.stringify({ store_codes: codes.slice(i, i + 200) }) });
+        let j = {}; try { j = await res.json(); } catch (e) { /* not json */ }
+        if (!res.ok) throw new Error(j.error || `o2i answered with HTTP ${res.status}`);
+        for (const s of j.stores || []) map.set(String(s.store_code).toUpperCase(), s);
+        missing.push(...(j.missing || [])); dupes.push(...(j.duplicates || []));
+      }
+      state.o2i = { map, codes: codes.join(','), at: new Date(), busy: false, error: '', missing, duplicates: dupes };
+    } catch (e) {
+      state.o2i = { ...state.o2i, map: new Map(), busy: false, at: null, error: (e && e.message) || 'Couldn’t reach o2i.' };
+      if (e instanceof TypeError) state.o2i.error = 'Couldn’t reach o2i. Check your connection, then press Refresh from o2i.';
+    }
+    refresh();
+  }
+  function renderO2i() {
+    const o = state.o2i;
+    let kind = 'idle', t;
+    if (o.busy) { kind = 'busy'; t = 'Checking store codes in o2i…'; }
+    else if (o.error) { kind = 'err'; t = o.error; }
+    else if (!state.s1) t = 'Store codes are checked once File 1 is in.';
+    else if (!o.at) t = 'Not checked yet.';
+    else {
+      const n = o.map.size, miss = o.missing.length;
+      kind = miss ? 'warn' : 'ok';
+      t = `${plural(n, 'store', 'stores')} found in o2i at ${o.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${miss ? ` · not found: ${o.missing.join(', ')}` : ''}.`;
+    }
+    els.o2iStatus.dataset.kind = kind;
+    els.o2iStatus.innerHTML = (kind === 'busy' ? '<span class="spin" aria-hidden="true"></span>' : '') + `<span>${esc(t)}</span>`;
+    els.o2iGo.disabled = o.busy || !state.s1;
+  }
+
+  /* ---------- Keepa ---------- */
+  function missingAsins(includeNotFound) {
+    const out = new Set();
+    for (const r of state.rows) {
+      const k = r.Asin.toUpperCase(); if (!k) continue;
+      if (!state.cats.has(k) || (includeNotFound && state.cats.get(k) === null)) out.add(k);
+    }
+    return [...out];
+  }
+  function setK(kind, text) { state.k = { kind, text }; renderKeepa(); }
+  function renderKeepa() {
+    const { kind, text } = state.k;
+    let t = text;
+    if (!t) {
+      if (!state.rows.length) t = 'Categories are looked up for order lines only.';
+      else {
+        const miss = missingAsins(false).length;
+        t = miss ? `${plural(miss, 'ASIN needs', 'ASINs need')} a category.` : 'Every order line has a category.';
+        if (miss && !state.key.trim()) t += ' Paste your Keepa API key to look them up.';
+      }
+    }
+    els.kStatus.dataset.kind = kind;
+    els.kStatus.innerHTML = (kind === 'busy' ? '<span class="spin" aria-hidden="true"></span>' : '') + `<span>${esc(t)}</span>`;
+    const n = missingAsins(true).length;
+    els.kGo.disabled = state.kBusy || !n;
+    els.kGo.textContent = state.kBusy ? 'Looking up…' : n ? `Look up ${plural(n, 'ASIN', 'ASINs')}` : 'Look up categories';
+  }
+  async function runKeepa(asins) {
+    if (state.kBusy || !asins.length) return;
+    const key = state.key.trim();
+    if (!key) { els.kKey.focus(); setK('warn', 'Paste your Keepa API key first.'); return; }
+    state.kBusy = true;
+    asins.forEach(a => attempted.add(a));
+    let done = 0, found = 0, tokens = null, stop = null;
+    try {
+      for (let i = 0; i < asins.length; i += 100) {
+        const part = asins.slice(i, i + 100);
+        setK('busy', `Looking up ${int.format(done + 1)}–${int.format(done + part.length)} of ${int.format(asins.length)} ASINs on Keepa…`);
+        let res, json = {};
+        try { res = await fetch('https://api.keepa.com/product?key=' + encodeURIComponent(key) + '&domain=1&history=0&asin=' + part.join(',')); }
+        catch (e) { stop = ['err', 'Couldn’t reach Keepa. Check your internet connection, then press Look up again.']; break; }
+        try { json = await res.json(); } catch (e) { json = {}; }
+        if (typeof json.tokensLeft === 'number') tokens = json.tokensLeft;
+        const got = catsFromKeepa(json);
+        if (!got.size && (res.status !== 200 || json.error)) {
+          if (res.status === 429) stop = ['warn', `Out of Keepa tokens.${json.refillIn ? ` More arrive in about ${Math.ceil(json.refillIn / 1000)} s;` : ''} press Look up again then.`];
+          else if (res.status === 402) stop = ['err', 'This Keepa key doesn’t grant API access. Check the key or your Keepa API plan.'];
+          else if (res.status === 400) stop = ['err', 'Keepa rejected the request. Check that the API key is correct.'];
+          else stop = ['err', 'Keepa: ' + ((json.error && json.error.message) || `HTTP ${res.status}`)];
+          break;
+        }
+        for (const a of part) { const c = got.get(a); state.cats.set(a, c || null); if (c) found++; }
+        done += part.length;
+        saveCats(); refresh(false);
+      }
+    } finally { state.kBusy = false; }
+    if (stop) { state.kAuto = false; setK(stop[0], stop[1]); }
+    else setK(found === asins.length ? 'ok' : 'warn', `Found ${int.format(found)} of ${plural(asins.length, 'category', 'categories')} on Keepa${tokens !== null ? ` · ${int.format(tokens)} tokens left` : ''}.`);
+    refresh(false);
+  }
+  let autoT;
+  function maybeAutoKeepa() {
+    if (!state.kAuto || state.kBusy || !state.key.trim()) return;
+    const miss = missingAsins(false).filter(a => !attempted.has(a));
+    if (!miss.length) return;
+    clearTimeout(autoT);
+    autoT = setTimeout(() => runKeepa(miss), 600);
+  }
+
+  /* ---------- Compute + render ---------- */
+  function compute() {
+    state.rows = []; state.left = []; state.total = 0;
+    if (!state.s1 || !state.s2 || !state.o2i.at) return;
+    const res = buildLines(state.s1, state.s2, state.o2i.map);
+    res.rows.forEach(r => {
+      r.Date_ordered = state.orderDate || '';
+      const k = r.Asin.toUpperCase();
+      const c = state.cats.has(k) ? state.cats.get(k) : undefined;
+      r._cat = c === undefined ? 'pending' : c === null ? 'none' : 'ok';
+      r.Category = c || '';
+    });
+    state.rows = res.rows; state.left = res.left; state.total = res.total;
+  }
+
+  const RULES = [
+    ['o2i', 'Store in o2i', 'File 1 Store Code exists in o2i'],
+    ['acct', 'Account Status: Active', 'from o2i'],
+    ['storage', 'Storage: No Limit or under 100%', 'from o2i Storage Limit'],
+    ['days', `Days remaining ${MIN_DAYS}+`, 'from File 2, matched by UPC'],
+    ['ung', 'Ungating Status: Ungated', 'from File 1']
+  ];
+  function renderRules() {
+    const cnt = { o2i: 0, acct: 0, storage: 0, days: 0, ung: 0 };
+    for (const l of state.left) for (const w of l.why) {
+      if (/isn’t found in o2i|No Store Code/.test(w)) cnt.o2i++;
+      else if (/^Account status/.test(w)) cnt.acct++;
+      else if (/^Storage/.test(w)) cnt.storage++;
+      else if (/File 2|days remaining|Days remaining/.test(w)) cnt.days++;
+      else if (/^Ungating/.test(w)) cnt.ung++;
+    }
+    const has = state.total > 0;
+    els.rulesList.innerHTML = RULES.map(([k, b, s]) => `<li><b>${esc(b)}</b><span>${esc(s)}</span>${has ? (cnt[k] ? `<em>${plural(cnt[k], 'row fails', 'rows fail')}</em>` : '<span>All rows pass</span>') : ''}</li>`).join('');
+  }
+
+  const fact = (cls, html) => `<li><span class="dot ${cls}" aria-hidden="true"></span><span>${html}</span></li>`;
+  function renderFiles() {
+    const s1 = state.s1, s2 = state.s2;
+    if (state.err1) els.st1.innerHTML = `<div class="err" role="alert">${esc(state.err1)}</div>`;
+    else if (!s1) els.st1.innerHTML = `<ul class="facts">${fact('idle', 'Waiting for File 1.')}</ul>`;
+    else els.st1.innerHTML = `
+      <div class="filemeta"><span>Loaded</span><strong>${esc(s1.fileName)}</strong></div>
+      <ul class="facts">
+        ${fact('ok', `${plural(s1.rows.length, 'product row', 'product rows')} · ${plural(storeCodes(s1).length, 'store', 'stores')} · tab ${esc(s1.sheet)}`)}
+        ${s1.byPos.length ? fact('warn', `Header not found, read by position: ${esc(s1.byPos.join(', '))}`) : fact('ok', 'All columns found by header name')}
+      </ul>`;
+    if (state.err2) els.st2.innerHTML = `<div class="err" role="alert">${esc(state.err2)}</div>`;
+    else if (!s2) els.st2.innerHTML = `<ul class="facts">${fact('idle', 'Waiting for File 2.')}</ul>`;
+    else els.st2.innerHTML = `
+      <div class="filemeta"><span>Loaded</span><strong>${esc(s2.fileName)}</strong></div>
+      <ul class="facts">
+        ${fact('ok', `${plural(s2.map.size, 'UPC', 'UPCs')} with ITEM NUMBER and Days remaining · tab ${esc(s2.sheet)}`)}
+        ${s2.byPos.length ? fact('warn', `Header not found, read by position: ${esc(s2.byPos.join(', '))}`) : fact('ok', 'All columns found by header name')}
+      </ul>`;
+  }
+
+  function renderOutput() {
+    const rows = state.rows, has = rows.length > 0;
+    els.xlsxBtn.disabled = !has; els.copyBtn.disabled = !has;
+    const units = rows.reduce((a, r) => a + (typeof r.Order_quantity === 'number' ? r.Order_quantity : 0), 0);
+    const cost = rows.reduce((a, r) => a + (typeof r.Order_quantity === 'number' && typeof r.Unit_price === 'number' ? r.Order_quantity * r.Unit_price : 0), 0);
+    const clients = new Set(rows.map(r => r.Client.toLowerCase()).filter(Boolean)).size;
+    const withCat = rows.filter(r => r._cat === 'ok').length;
+    els.stats.innerHTML = [
+      [int.format(rows.length), 'Order lines'],
+      [int.format(units), 'Units ordered'],
+      [usd.format(cost), 'Unit price × quantity'],
+      [int.format(clients), clients === 1 ? 'Client' : 'Clients'],
+      [`${int.format(withCat)}/${int.format(rows.length)}`, 'With a category']
+    ].map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+
+    let wait = '';
+    if (!state.s1) wait = 'Drop File 1, the reorder list, in step 1.';
+    else if (!state.s2) wait = 'Drop File 2, the distributor file, in step 2 so UPCs and Days remaining can be matched.';
+    else if (state.o2i.busy) wait = 'Checking store codes in o2i…';
+    else if (!state.o2i.at) wait = state.o2i.error ? 'o2i couldn’t be checked, so rows can’t be filtered yet. See step 3.' : 'Waiting for the o2i check in step 3.';
+    if (wait) {
+      els.notes.innerHTML = '';
+      els.tbl.innerHTML = `<tbody><tr><td class="empty">${esc(wait)}</td></tr></tbody>`;
+      return;
+    }
+
+    const pend = rows.filter(r => r._cat === 'pending').length, none = rows.filter(r => r._cat === 'none').length;
+    const pills = [];
+    if (has && !pend && !none) pills.push('<span class="pill ok">Every line has an item # and a category</span>');
+    if (pend) pills.push(`<span class="pill warn">${plural(pend, 'line is', 'lines are')} waiting for a Keepa category</span>`);
+    if (none) pills.push(`<span class="pill warn">${plural(none, 'line has', 'lines have')} no category on Keepa</span>`);
+    if (state.left.length) pills.push(`<span class="pill bad">${plural(state.left.length, 'row', 'rows')} left out, listed below</span>`);
+    els.notes.innerHTML = `<span class="excl">Kept <b>${int.format(rows.length)}</b> of <b>${int.format(state.total)}</b> rows.</span>${pills.join('')}`;
+
+    if (!has) { els.tbl.innerHTML = '<tbody><tr><td class="empty">No row passes all five rules. The reasons are listed under Left out.</td></tr></tbody>'; return; }
+    const letters = 'ABCDEFGHIJKLMNOPQRST';
+    const head = `<thead><tr><th title="Row in File 1">Src<span class="letter">row</span></th>${OUT.map((h, i) => `<th>${esc(h)}<span class="letter">${letters[i]}</span></th>`).join('')}</tr></thead>`;
+    const body = rows.map(r => `<tr><td class="src">${r._line}</td>${OUT.map(h => {
+      const v = r[h], txt = fmt(h, v), cls = [];
+      if (typeof v === 'number') cls.push('n');
+      if (MONO.has(h)) cls.push('m');
+      if (h === 'Product_name') cls.push('name');
+      if (typeof v === 'number' && v < 0) cls.push('neg');
+      let inner = esc(txt);
+      if (h === 'Amz_link' && v) inner = `<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">dp/${esc(r.Asin)}</a>`;
+      if (h === 'Category' && r._cat === 'pending') { cls.push('pend'); inner = 'pending'; }
+      if (h === 'Category' && r._cat === 'none') { cls.push('miss'); inner = 'not found'; }
+      const title = h === 'Product_name' && txt ? ` title="${esc(txt)}"` : '';
+      return `<td${cls.length ? ` class="${cls.join(' ')}"` : ''}${title}>${inner}</td>`;
+    }).join('')}</tr>`).join('');
+    els.tbl.innerHTML = head + `<tbody>${body}</tbody>`;
+  }
+
+  function renderLeft() {
+    const L = state.left;
+    els.leftCount.textContent = state.total ? `${plural(L.length, 'row', 'rows')} of ${int.format(state.total)}` : '';
+    if (!state.total) { els.leftTbl.innerHTML = '<tbody><tr><td class="empty">Rows that fail a rule show up here with the reason.</td></tr></tbody>'; return; }
+    if (!L.length) { els.leftTbl.innerHTML = '<tbody><tr><td class="empty">Nothing left out. Every row passed.</td></tr></tbody>'; return; }
+    els.leftTbl.innerHTML = '<thead><tr><th>Src row</th><th>Asin</th><th>Store</th><th>Client</th><th>Why it was left out</th></tr></thead><tbody>' +
+      L.map(l => `<tr><td class="src">${l.line}</td><td class="m">${esc(l.asin)}</td><td class="m">${esc(l.store)}</td><td>${esc(l.client)}</td><td class="why">${esc(l.why.join(' · '))}</td></tr>`).join('') + '</tbody>';
+  }
+
+  function renderMap() {
+    const MAP = [
+      ['Tracking_code', 'Left blank'], ['Asin', 'File 1 ASIN'], ['upc/gtin', 'File 1 UPC'], ['Brand', 'File 1 BRAND'], ['Product_name', 'File 1 TITLE'],
+      ['Amz_link', 'https://www.amazon.com/dp/ + ASIN'], ['Category', 'Keepa root category, looked up by ASIN'],
+      ['Bundle_size', 'File 1 Bundle Size'], ['Unit_price', 'File 1 Unit Cost'], ['Order_quantity', 'File 1 Recommended Qty. × Bundle Size'],
+      ['Target_sell_price', 'File 1 90Days Average'], ['profit', 'File 1 Profit Per Unit'], ['Roi', 'File 1 ROI'],
+      ['Breakeven_price', 'File 1 Breakeven'], ['Distributor', 'File 1 DISTRIBUTOR'],
+      ['Date_ordered', 'Friday of the current week (Saturday and Sunday use the next Friday)'],
+      ['Order_id', 'File 2 ITEM NUMBER, matched by UPC'], ['Invoice_number', 'Left blank'], ['Notes', 'Left blank'], ['Client', 'File 1 Client']
+    ];
+    els.mapList.innerHTML = MAP.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
+  }
+
+  function renderDateHint() {
+    const auto = isoOf(orderFriday(new Date()));
+    els.dateHint.textContent = state.orderDate === auto ? 'This week’s Friday' : `Changed from this week’s Friday (${fmtDate(auto)})`;
+  }
+
+  function refresh(auto = true) {
+    compute(); renderO2i(); renderRules(); renderOutput(); renderLeft(); renderKeepa(); renderDateHint();
+    if (auto) maybeAutoKeepa();
+  }
+
+  /* ---------- Exports ---------- */
+  function tsv() {
+    const lines = [];
+    if (state.includeHeader) lines.push(OUT.join('\t'));
+    for (const r of state.rows) lines.push(OUT.map(h => {
+      let v = r[h];
+      let s = h === 'Date_ordered' ? fmtDate(v) : (v === '' || v == null ? '' : String(v));
+      s = s.replace(/[\t\r\n]+/g, ' ');
+      if (/^\d+$/.test(s) && (s[0] === '0' || s.length > 15)) s = `="${s}"`;
+      return s;
+    }).join('\t'));
+    return lines.join('\n');
+  }
+  function xlsxBuffer() {
+    const X = window.XLSX, ws = {};
+    OUT.forEach((h, c) => { ws[X.utils.encode_cell({ r: 0, c })] = { t: 's', v: h }; });
+    state.rows.forEach((row, i) => OUT.forEach((h, c) => {
+      const v = row[h];
+      if (v === '' || v === null || v === undefined) return;
+      let cell;
+      if (h === 'Date_ordered') cell = { t: 'n', v: dateSerial(v), z: 'm/d/yyyy' };
+      else if (typeof v === 'number') cell = { t: 'n', v };
+      else cell = { t: 's', v: String(v) };
+      ws[X.utils.encode_cell({ r: i + 1, c })] = cell;
+    }));
+    ws['!ref'] = X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: state.rows.length, c: OUT.length - 1 } });
+    ws['!cols'] = OUT.map(h => ({ wch: h === 'Product_name' ? 48 : h === 'Amz_link' ? 38 : h === 'Category' ? 26 : Math.max(12, h.length + 2) }));
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, 'Sheet1');
+    return X.write(wb, { bookType: 'xlsx', type: 'array' });
+  }
+  function download(filename, buf) {
+    const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  /* ---------- Toast ---------- */
+  let toastT;
+  function toast(msg) {
+    els.toast.textContent = msg; els.toast.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(() => els.toast.classList.remove('show'), 3200);
+  }
+
+  /* ---------- File loading ---------- */
+  class UserError extends Error {}
+  async function readSheets(file) {
+    const X = window.XLSX;
+    if (!X) throw new UserError('The spreadsheet reader didn’t load. Check your connection and reload the page.');
+    if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name)) throw new UserError(`“${file.name}” isn’t an Excel or CSV file.`);
+    const buf = await file.arrayBuffer();
+    let wb;
+    try { wb = X.read(buf, { type: 'array', cellText: false, cellNF: false, cellStyles: false }); }
+    catch (e) { throw new UserError(`“${file.name}” couldn’t be opened. Save it again as .xlsx and retry.`); }
+    return wb.SheetNames.map(name => {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws['!ref']) return { name, aoa: [] };
+      const rg = X.utils.decode_range(ws['!ref']); rg.s.r = 0; rg.s.c = 0;
+      return { name, aoa: X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true, range: rg }) };
+    });
+  }
+  // Pick the tab whose header matches best (fewest columns read by position).
+  function bestParsed(sheets, parse) {
+    let best = null;
+    for (const s of sheets) { const p = parse(s.aoa); if (p && (!best || p.byPos.length < best.byPos.length)) best = { ...p, sheet: s.name }; }
+    return best;
+  }
+  async function withDrop(drop, input, fn) {
+    drop.classList.add('busy');
+    await new Promise(r => setTimeout(r, 30));
+    try { await fn(); } finally { drop.classList.remove('busy'); input.value = ''; }
+  }
+  async function loadFile1(file) {
+    if (!file) return;
+    await withDrop(els.drop1, els.file1, async () => {
+      state.err1 = '';
+      try {
+        const p = bestParsed(await readSheets(file), parseFile1);
+        if (!p) throw new UserError(`No header row with ASIN and UPC found in “${file.name}”.`);
+        state.s1 = { ...p, fileName: file.name };
+        state.o2i = { map: new Map(), codes: '', at: null, busy: false, error: '', missing: [], duplicates: [] };
+        state.kAuto = true; state.k = { kind: 'idle', text: '' };
+        toast(`Read ${file.name}`);
+      } catch (e) {
+        state.err1 = e instanceof UserError ? e.message : `Something went wrong reading “${file.name}”: ${e && e.message ? e.message : e}`;
+      }
+      renderFiles(); refresh();
+      if (state.s1 && !state.err1) refreshO2i();
+    });
+  }
+  async function loadFile2(file) {
+    if (!file) return;
+    await withDrop(els.drop2, els.file2, async () => {
+      state.err2 = '';
+      try {
+        const p = bestParsed(await readSheets(file), parseFile2);
+        if (!p) throw new UserError(`No header row with UPC and ITEM NUMBER found in “${file.name}”.`);
+        state.s2 = { ...p, fileName: file.name };
+        state.kAuto = true; state.k = { kind: 'idle', text: '' };
+        toast(`Read ${file.name}`);
+      } catch (e) {
+        state.err2 = e instanceof UserError ? e.message : `Something went wrong reading “${file.name}”: ${e && e.message ? e.message : e}`;
+      }
+      renderFiles(); refresh();
+    });
+  }
+
+  /* ---------- Events ---------- */
+  function wireDrop(drop, input, fn) {
+    input.addEventListener('change', () => fn(input.files && input.files[0]));
+    ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'dragend'].forEach(t => drop.addEventListener(t, () => drop.classList.remove('over')));
+    drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); fn(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
+  }
+  wireDrop(els.drop1, els.file1, loadFile1);
+  wireDrop(els.drop2, els.file2, loadFile2);
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+
+  els.o2iGo.addEventListener('click', () => refreshO2i());
+  els.orderDate.addEventListener('input', () => { state.orderDate = els.orderDate.value; refresh(false); });
+  els.incHeader.addEventListener('change', () => { state.includeHeader = els.incHeader.checked; store.set('otm.includeHeader', state.includeHeader); });
+  els.kKey.addEventListener('input', () => { state.key = els.kKey.value; if (state.remember) store.set('otm.key', state.key.trim()); state.kAuto = true; renderKeepa(); });
+  els.kKey.addEventListener('change', () => maybeAutoKeepa());
+  els.kShow.addEventListener('click', () => {
+    const show = els.kKey.type === 'password';
+    els.kKey.type = show ? 'text' : 'password'; els.kShow.textContent = show ? 'Hide' : 'Show'; els.kShow.setAttribute('aria-pressed', String(show));
+  });
+  els.kRemember.addEventListener('change', () => {
+    state.remember = els.kRemember.checked; store.set('otm.remember', state.remember);
+    if (state.remember) store.set('otm.key', state.key.trim()); else store.del('otm.key');
+    toast(state.remember ? 'Key saved in this browser' : 'Key removed from this browser');
+  });
+  els.kGo.addEventListener('click', () => { state.kAuto = true; runKeepa(missingAsins(true)); });
+  els.kClear.addEventListener('click', () => { state.cats = new Map(); attempted.clear(); store.del('otm.cats.root'); state.k = { kind: 'idle', text: '' }; refresh(false); toast('Saved categories cleared'); });
+
+  els.copyBtn.addEventListener('click', () => {
+    const text = tsv(), n = state.rows.length;
+    const done = () => { els.fallback.hidden = true; toast(`Copied ${plural(n, 'row', 'rows')}.`); };
+    const fail = () => { els.fallback.hidden = false; els.fallbackText.value = text; els.fallbackText.focus(); els.fallbackText.select(); };
+    try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fail); else fail(); } catch (e) { fail(); }
+  });
+  els.xlsxBtn.addEventListener('click', () => {
+    const pend = state.rows.filter(r => r._cat === 'pending').length;
+    let buf;
+    try { buf = xlsxBuffer(); } catch (e) { toast('Couldn’t build the .xlsx file.'); return; }
+    const [y, m, d] = (state.orderDate || isoOf(new Date())).split('-');
+    const name = `Order Template ${m}-${d}-${y.slice(2)}.xlsx`;
+    download(name, buf);
+    toast(pend ? `Downloaded ${name}. ${plural(pend, 'line has', 'lines have')} no category yet.` : `Downloaded ${name}`);
+  });
+
+  /* ---------- Boot ---------- */
+  els.orderDate.value = state.orderDate;
+  els.incHeader.checked = state.includeHeader;
+  els.kKey.value = state.key;
+  els.kRemember.checked = state.remember;
+  renderMap(); renderFiles(); refresh(false);
+})();
+</script>
+</body>
+</html>
