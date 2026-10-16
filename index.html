@@ -347,7 +347,8 @@ details.map summary { cursor: pointer; font-weight: 600; }
   const num = v => { const n = toNum(v); return isNaN(n) ? (isBlank(v) ? '' : String(v)) : n; };
   const str = v => isBlank(v) ? '' : String(v).trim();
   const upcKey = v => isBlank(v) ? '' : String(typeof v === 'number' ? Math.round(v) : v).replace(/\D/g, '').replace(/^0+/, '');
-  const upcOut = v => { if (isBlank(v)) return ''; const s = String(typeof v === 'number' ? Math.round(v) : v).trim(); return /^\d{1,15}$/.test(s) ? Number(s) : s; };
+  // upc/gtin is written as text: padded with leading zeros to 12 digits; 12+ digits stay as they are.
+  const upcOut = v => { if (isBlank(v)) return ''; const s = String(typeof v === 'number' ? Math.round(v) : v).trim(); return /^\d+$/.test(s) && s.length < 12 ? s.padStart(12, '0') : s; };
   const idOut = v => { const s = str(v); return /^\d{1,15}$/.test(s) ? Number(s) : s; };
   function storagePct(v) {
     if (isBlank(v)) return null;
