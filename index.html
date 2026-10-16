@@ -102,6 +102,8 @@ h1 { font-family: var(--f-display); font-stretch: 112%; font-weight: 800; font-s
 .facts li { display: flex; gap: 8px; align-items: baseline; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; transform: translateY(-1px); }
 .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.idle { background: var(--line); }
+.colsel { font: 500 var(--t-sm)/1.2 var(--f-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 100%; }
+.vals { color: var(--muted); }
 .err { background: var(--bad-soft); color: var(--bad); border-radius: 6px; padding: 10px 12px; font-size: var(--t-sm); }
 
 /* Lookups */
@@ -322,7 +324,8 @@ details.map summary { cursor: pointer; font-weight: 600; }
     ['breakeven', 'L', 'Breakeven', ['breakeven', 'breakevenprice']],
     ['client', 'O', 'Client', ['client']],
     ['store', 'P', 'Store Code', ['storecode']],
-    ['ung', 'U', 'Ungating Status', ['ungatingstatus']]
+    ['ung', 'U', 'Ungating Status', ['ungatingstatus', 'uglistingstatus', 'ungatestatus', 'ungating'],
+      k => k.includes('ungat') || k.startsWith('ug') || k.includes('listingstatus')]
   ];
   const F2 = [
     ['upc', 'B', 'UPC', ['upc']],
@@ -364,14 +367,15 @@ details.map summary { cursor: pointer; font-weight: 600; }
   function resolveCols(header, spec) {
     const idx = new Map();
     (header || []).forEach((h, i) => { const k = norm(h); if (k && !idx.has(k)) idx.set(k, i); });
-    const cols = {}, byPos = [];
-    for (const [key, letter, label, names] of spec) {
+    const cols = {}, byPos = [], guessed = [];
+    for (const [key, letter, label, names, test] of spec) {
       let i = -1;
       for (const n of names) if (idx.has(n)) { i = idx.get(n); break; }
-      if (i < 0) { i = CI(letter); byPos.push(`${label} (column ${letter})`); }
+      if (i < 0 && test) for (const [k, j] of idx) if (test(k)) { i = j; break; }
+      if (i < 0) { i = CI(letter); byPos.push(`${label} (column ${letter})`); guessed.push(key); }
       cols[key] = i;
     }
-    return { cols, byPos };
+    return { cols, byPos, guessed };
   }
   function findHeader(aoa, test, max = 40) {
     for (let i = 0; i < Math.min(aoa.length, max); i++) { const r = aoa[i]; if (r && test(r.map(norm))) return i; }
@@ -383,11 +387,12 @@ details.map summary { cursor: pointer; font-weight: 600; }
   function parseFile1(aoa) {
     const h = findHeader(aoa, isF1Header);
     if (h < 0) return null;
-    const { cols, byPos } = resolveCols(aoa[h], F1);
+    const { cols, byPos, guessed } = resolveCols(aoa[h], F1);
     const rows = [];
     for (let i = h + 1; i < aoa.length; i++) { const r = aoa[i]; if (r && !isBlank(r[cols.asin])) rows.push({ r, line: i + 1 }); }
-    return { cols, byPos, rows, headerLine: h + 1 };
+    return { cols, byPos, guessed, header: aoa[h] || [], rows, headerLine: h + 1 };
   }
+  const colLetter = i => { let s = ''; for (i += 1; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; };
   function parseFile2(aoa) {
     const h = findHeader(aoa, isF2Header);
     if (h < 0) return null;
@@ -699,10 +704,35 @@ details.map summary { cursor: pointer; font-weight: 600; }
       else if (/^Ungating/.test(w)) cnt.ung++;
     }
     const has = state.total > 0;
-    els.rulesList.innerHTML = RULES.map(([k, b, s]) => `<li><b>${esc(b)}</b><span>${esc(s)}</span>${has ? (cnt[k] ? `<em>${plural(cnt[k], 'row fails', 'rows fail')}</em>` : '<span>All rows pass</span>') : ''}</li>`).join('');
+    const ungName = state.s1 && str(state.s1.header[state.s1.cols.ung]);
+    els.rulesList.innerHTML = RULES.map(([k, b, s]) => [k, b, k === 'ung' && ungName ? `from File 1 “${ungName}”` : s]).map(([k, b, s]) => `<li><b>${esc(b)}</b><span>${esc(s)}</span>${has ? (cnt[k] ? `<em>${plural(cnt[k], 'row fails', 'rows fail')}</em>` : '<span>All rows pass</span>') : ''}</li>`).join('');
   }
 
   const fact = (cls, html) => `<li><span class="dot ${cls}" aria-hidden="true"></span><span>${html}</span></li>`;
+  // Ungating column: matched by name, a saved pick, or the user's choice from this list.
+  function ungSelect(s1) {
+    const n = Math.max(s1.header.length, s1.cols.ung + 1), opts = [];
+    for (let i = 0; i < n; i++) {
+      const h = s1.header[i];
+      if (isBlank(h) && i !== s1.cols.ung) continue;
+      opts.push(`<option value="${i}"${i === s1.cols.ung ? ' selected' : ''}>${colLetter(i)} · ${esc(isBlank(h) ? '(no header)' : String(h).trim())}</option>`);
+    }
+    return `<select id="ungSel" class="colsel" aria-label="Ungating column">${opts.join('')}</select>`;
+  }
+  function ungValues(s1) {
+    const m = new Map();
+    for (const { r } of s1.rows) { const v = str(r[s1.cols.ung]) || '(blank)'; m.set(v, (m.get(v) || 0) + 1); }
+    const top = [...m].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([v, c]) => `${v} ${c}`);
+    return top.length ? ` Values: ${top.join(' · ')}${m.size > 4 ? ' …' : ''}` : '';
+  }
+  function applyUngPick(s1) {
+    s1.ungAuto = !s1.guessed.includes('ung');
+    const saved = store.get('otm.ungHeader');
+    if (!s1.ungAuto && saved) {
+      const i = s1.header.findIndex(h => norm(h) === saved);
+      if (i >= 0) { s1.cols.ung = i; s1.ungAuto = true; }
+    }
+  }
   function renderFiles() {
     const s1 = state.s1, s2 = state.s2;
     if (state.err1) els.st1.innerHTML = `<div class="err" role="alert">${esc(state.err1)}</div>`;
@@ -711,7 +741,8 @@ details.map summary { cursor: pointer; font-weight: 600; }
       <div class="filemeta"><span>Loaded</span><strong>${esc(s1.fileName)}</strong></div>
       <ul class="facts">
         ${fact('ok', `${plural(s1.rows.length, 'product row', 'product rows')} · ${plural(storeCodes(s1).length, 'store', 'stores')} · tab ${esc(s1.sheet)}`)}
-        ${s1.byPos.length ? fact('warn', `Header not found, read by position: ${esc(s1.byPos.join(', '))}`) : fact('ok', 'All columns found by header name')}
+        ${(() => { const other = s1.byPos.filter((_, j) => s1.guessed[j] !== 'ung'); return other.length ? fact('warn', `Header not found, read by position: ${esc(other.join(', '))}`) : fact('ok', 'All other columns found by header name'); })()}
+        ${fact(s1.ungAuto ? 'ok' : 'warn', `${s1.ungAuto ? 'Ungating column' : 'Ungating column not recognised. Check it’s right'}: ${ungSelect(s1)}<span class="vals">${esc(ungValues(s1))}</span>`)}
       </ul>`;
     if (state.err2) els.st2.innerHTML = `<div class="err" role="alert">${esc(state.err2)}</div>`;
     else if (!s2) els.st2.innerHTML = `<ul class="facts">${fact('idle', 'Waiting for File 2.')}</ul>`;
@@ -889,6 +920,7 @@ details.map summary { cursor: pointer; font-weight: 600; }
         const p = bestParsed(await readSheets(file), parseFile1);
         if (!p) throw new UserError(`No header row with ASIN and UPC found in “${file.name}”.`);
         state.s1 = { ...p, fileName: file.name };
+        applyUngPick(state.s1);
         state.o2i = { map: new Map(), codes: '', at: null, busy: false, error: '', missing: [], duplicates: [] };
         state.kAuto = true; state.k = { kind: 'idle', text: '' };
         toast(`Read ${file.name}`);
@@ -928,6 +960,15 @@ details.map summary { cursor: pointer; font-weight: 600; }
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => e.preventDefault());
 
+  els.st1.addEventListener('change', e => {
+    if (e.target.id !== 'ungSel' || !state.s1) return;
+    const i = Number(e.target.value);
+    state.s1.cols.ung = i; state.s1.ungAuto = true;
+    const h = norm(state.s1.header[i]);
+    if (h) store.set('otm.ungHeader', h);
+    renderFiles(); refresh(false);
+    toast(h ? 'Ungating column saved for next time' : 'Ungating column set');
+  });
   els.o2iGo.addEventListener('click', () => refreshO2i());
   els.orderDate.addEventListener('input', () => { state.orderDate = els.orderDate.value; refresh(false); });
   els.incHeader.addEventListener('change', () => { state.includeHeader = els.incHeader.checked; store.set('otm.includeHeader', state.includeHeader); });
