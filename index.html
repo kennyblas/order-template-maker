@@ -288,7 +288,7 @@ details.map summary { cursor: pointer; font-weight: 600; }
     </section>
 
     <section class="panel" aria-labelledby="h-left">
-      <div class="panel-head"><h2 id="h-left">Left out</h2><span class="spacer"></span><span class="hint" id="leftCount"></span></div>
+      <div class="panel-head"><h2 id="h-left">Left out</h2><span class="spacer"></span><span class="hint" id="leftCount"></span><button id="leftBtn" type="button">Download left out .xlsx</button></div>
       <div class="table-wrap" style="max-height:min(50vh,520px)"><table id="leftTbl"></table></div>
     </section>
 
@@ -439,7 +439,7 @@ details.map summary { cursor: pointer; font-weight: 600; }
       if (!ieq(g('ung'), 'Ungated')) why.push(`Ungating status is ${str(g('ung')) || 'blank'}`);
 
       const asin = str(g('asin'));
-      if (why.length) { left.push({ line, asin, client: str(g('client')), store, why }); continue; }
+      if (why.length) { left.push({ line, asin, client: str(g('client')), store, why, r }); continue; }
       const rec = toNum(g('recQty')), bun = isBlank(g('bundle')) ? 1 : toNum(g('bundle'));
       rows.push({
         Tracking_code: '', Asin: asin, 'upc/gtin': upcOut(upcRaw),
@@ -531,7 +531,7 @@ details.map summary { cursor: pointer; font-weight: 600; }
     kKey: $('kKey'), kShow: $('kShow'), kRemember: $('kRemember'), kGo: $('kGo'), kClear: $('kClear'), kStatus: $('kStatus'),
     rulesList: $('rulesList'), orderDate: $('orderDate'), dateHint: $('dateHint'), incHeader: $('incHeader'),
     xlsxBtn: $('xlsxBtn'), copyBtn: $('copyBtn'), stats: $('stats'), notes: $('notes'), tbl: $('tbl'),
-    leftTbl: $('leftTbl'), leftCount: $('leftCount'), fallback: $('fallback'), fallbackText: $('fallbackText'),
+    leftTbl: $('leftTbl'), leftCount: $('leftCount'), leftBtn: $('leftBtn'), fallback: $('fallback'), fallbackText: $('fallbackText'),
     toast: $('toast'), mapList: $('mapList')
   };
 
@@ -810,6 +810,7 @@ details.map summary { cursor: pointer; font-weight: 600; }
 
   function renderLeft() {
     const L = state.left;
+    els.leftBtn.disabled = !L.length;
     els.leftCount.textContent = state.total ? `${plural(L.length, 'row', 'rows')} of ${int.format(state.total)}` : '';
     if (!state.total) { els.leftTbl.innerHTML = '<tbody><tr><td class="empty">Rows that fail a rule show up here with the reason.</td></tr></tbody>'; return; }
     if (!L.length) { els.leftTbl.innerHTML = '<tbody><tr><td class="empty">Nothing left out. Every row passed.</td></tr></tbody>'; return; }
@@ -869,6 +870,27 @@ details.map summary { cursor: pointer; font-weight: 600; }
     ws['!cols'] = OUT.map(h => ({ wch: h === 'Product_name' ? 48 : h === 'Amz_link' ? 38 : h === 'Category' ? 26 : Math.max(12, h.length + 2) }));
     const wb = X.utils.book_new();
     X.utils.book_append_sheet(wb, ws, 'Sheet1');
+    return X.write(wb, { bookType: 'xlsx', type: 'array' });
+  }
+  // Left out: File 1's own columns for each dropped row, plus why it was dropped.
+  function leftBuffer() {
+    const X = window.XLSX, s1 = state.s1, ws = {};
+    const hdr = s1.header.map((h, i) => isBlank(h) ? colLetter(i) : String(h).trim());
+    const head = [...hdr, 'Reason left out'];
+    head.forEach((h, c) => { ws[X.utils.encode_cell({ r: 0, c })] = { t: 's', v: h }; });
+    state.left.forEach((l, i) => {
+      hdr.forEach((_, c) => {
+        let v = l.r[c];
+        if (c === s1.cols.upc) v = upcOut(v);
+        if (v === '' || v === null || v === undefined) return;
+        ws[X.utils.encode_cell({ r: i + 1, c })] = typeof v === 'number' ? { t: 'n', v } : { t: 's', v: String(v) };
+      });
+      ws[X.utils.encode_cell({ r: i + 1, c: hdr.length })] = { t: 's', v: l.why.join('; ') };
+    });
+    ws['!ref'] = X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: state.left.length, c: head.length - 1 } });
+    ws['!cols'] = head.map((h, c) => ({ wch: c === hdr.length ? 60 : c === s1.cols.title ? 40 : Math.max(10, h.length + 2) }));
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, 'Left out');
     return X.write(wb, { bookType: 'xlsx', type: 'array' });
   }
   function download(filename, buf) {
@@ -1001,6 +1023,16 @@ details.map summary { cursor: pointer; font-weight: 600; }
     const name = `Order Template ${m}-${d}-${y.slice(2)}.xlsx`;
     download(name, buf);
     toast(pend ? `Downloaded ${name}. ${plural(pend, 'line has', 'lines have')} no category yet.` : `Downloaded ${name}`);
+  });
+
+  els.leftBtn.addEventListener('click', () => {
+    if (!state.left.length) return;
+    let buf;
+    try { buf = leftBuffer(); } catch (e) { toast('Couldn’t build the left-out file.'); return; }
+    const [y, m, d] = (state.orderDate || isoOf(new Date())).split('-');
+    const name = `Left out ${m}-${d}-${y.slice(2)}.xlsx`;
+    download(name, buf);
+    toast(`Downloaded ${name}`);
   });
 
   /* ---------- Boot ---------- */
